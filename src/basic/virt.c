@@ -460,10 +460,29 @@ int detect_container(void) {
         _cleanup_free_ char *o = NULL;
         _cleanup_free_ char *p = NULL;
         const char *e = NULL;
+        unsigned i;
         int r;
+
+        static const struct {
+                const char *file_path;
+                int id;
+        } container_file_table[] = {
+                /* https://github.com/moby/moby/issues/18355 */
+                { "/.dockerenv",        VIRTUALIZATION_DOCKER },
+                /* https://github.com/containers/podman/issues/6192 */
+                /* https://github.com/containers/podman/issues/3586#issuecomment-661918679 */
+                { "/run/.containerenv", VIRTUALIZATION_PODMAN },
+        };
 
         if (cached_found >= 0)
                 return cached_found;
+
+        for (i = 0; i < ELEMENTSOF(container_file_table); i++) {
+                if (access(container_file_table[i].file_path, F_OK) >= 0) {
+                        r = container_file_table[i].id;
+                        goto finish;
+                }
+        }
 
         /* /proc/vz exists in container and outside of the container, /proc/bc only outside of the container. */
         if (access("/proc/vz", F_OK) >= 0 &&
