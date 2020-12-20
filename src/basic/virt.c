@@ -9,11 +9,13 @@
 #include <unistd.h>
 
 #include "alloc-util.h"
+#include "cgroup-util.h"
 #include "dirent-util.h"
 #include "env-util.h"
 #include "fd-util.h"
 #include "fileio.h"
 #include "macro.h"
+#include "path-util.h"
 #include "process-util.h"
 #include "stat-util.h"
 #include "string-table.h"
@@ -454,6 +456,92 @@ static const char *const container_table[_VIRTUALIZATION_MAX] = {
 
 DEFINE_PRIVATE_STRING_TABLE_LOOKUP_FROM_STRING(container, int);
 
+static int detect_ancestor_cgroupfs(const char *cgroupfs_mount_point) {
+        int r;
+        _cleanup_fclose_ FILE *proc_self_mountinfo = NULL;
+
+        r = fopen_unlocked("/proc/self/mountinfo", "re", &proc_self_mountinfo);
+        if (r < 0)
+                return log_debug_errno(r, "Failed to open /proc/self/mountinfo: %m");
+
+        for (;;) {
+                _cleanup_free_ char *line = NULL, *root = NULL, *mount_point = NULL;
+                int mount_id, parent_id, major, minor;
+
+                r = read_line(proc_self_mountinfo, LONG_LINE_MAX, &line);
+                if (r < 0)
+                        return r;
+                if (r == 0)
+                        break;
+
+                if (sscanf(line, "%i %i %i:%i %ms %ms",
+                           &mount_id,
+                           &parent_id,
+                           &major,
+                           &minor,
+                           &root,
+                           &mount_point) != 6)
+                        continue;
+
+                if (!path_equal(mount_point, cgroupfs_mount_point))
+                        continue;
+
+                return !empty_or_root(root);
+        }
+
+        /* We have not found anything mounted at cgroupfs_mount_point. */
+        return false;
+}
+
+static int detect_ancestor_cgroup(void) {
+        int r;
+
+        r = cg_all_unified();
+        if (r < 0)
+                return false;
+
+        if (r) {
+                /* cgroup v2 */
+
+                if (detect_ancestor_cgroupfs("/sys/fs/cgroup") > 0)
+                        return true;
+                /* The mounted cgroupfs2 appears to be the root cgroup of this cgroup namespace. */
+
+                if (!cg_ns_supported())
+                    return false;
+
+                /* There's no cgroup.events in the root cgroup. */
+                if (access("/sys/fs/cgroup/cgroup.events", F_OK) < 0)
+                        return false;
+
+                /* To be safe in case future kernel versions add cgroup.events for the root
+                 * cgroup too, additionally check for cgroup.type, since cgroup.type is something
+                 * that makes no sense whatsoever in the root cgroup. */
+                return access("/sys/fs/cgroup/cgroup.type", F_OK) == 0;
+        } else {
+                /* cgroup v1 */
+
+                /* If systemd controller is not mounted, do not even bother. */
+                if (access("/sys/fs/cgroup/systemd", F_OK) < 0)
+                        return false;
+
+                if (detect_ancestor_cgroupfs("/sys/fs/cgroup/systemd") > 0)
+                        return true;
+                /* The mounted cgroupfs appears to be the root cgroup of this cgroup namespace. */
+
+                if (!cg_ns_supported())
+                        return false;
+
+                /* release_agent only exists in the root cgroup. */
+                r = access("/sys/fs/cgroup/systemd/release_agent", F_OK);
+                if (r == 0)
+                        return false;
+                if (errno != ENOENT)
+                        return -errno;
+                return true;
+        }
+}
+
 int detect_container(void) {
         static thread_local int cached_found = _VIRTUALIZATION_INVALID;
         _cleanup_free_ char *m = NULL;
@@ -563,6 +651,14 @@ int detect_container(void) {
         }
         if (r < 0) /* This only works if we have CAP_SYS_PTRACE, hence let's better ignore failures here */
                 log_debug_errno(r, "Failed to read $container of PID 1, ignoring: %m");
+
+        r = detect_ancestor_cgroup();
+        if (r > 0) {
+                r = VIRTUALIZATION_CONTAINER_OTHER;
+                goto finish;
+        }
+        if (r < 0)
+                log_debug_errno(r, "Failed to detect cgroup namespace: %m");
 
 none:
         /* If that didn't work, give up, assume no container manager. */
