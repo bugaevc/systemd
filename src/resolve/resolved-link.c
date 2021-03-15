@@ -77,8 +77,7 @@ Link *link_free(Link *l) {
                 return NULL;
 
         /* Send goodbye messages. */
-        dns_scope_announce(l->mdns_ipv4_scope, true);
-        dns_scope_announce(l->mdns_ipv6_scope, true);
+        dns_scope_announce(l->mdns_scope, true);
 
         link_flush_settings(l);
 
@@ -91,8 +90,7 @@ Link *link_free(Link *l) {
         dns_scope_free(l->unicast_scope);
         dns_scope_free(l->llmnr_ipv4_scope);
         dns_scope_free(l->llmnr_ipv6_scope);
-        dns_scope_free(l->mdns_ipv4_scope);
-        dns_scope_free(l->mdns_ipv6_scope);
+        dns_scope_free(l->mdns_scope);
 
         free(l->state_file);
         free(l->ifname);
@@ -160,27 +158,16 @@ void link_allocate_scopes(Link *l) {
         } else
                 l->llmnr_ipv6_scope = dns_scope_free(l->llmnr_ipv6_scope);
 
-        if (link_relevant(l, AF_INET, true) &&
+        if (link_relevant(l, AF_UNSPEC, true) &&
             l->mdns_support != RESOLVE_SUPPORT_NO &&
             l->manager->mdns_support != RESOLVE_SUPPORT_NO) {
-                if (!l->mdns_ipv4_scope) {
-                        r = dns_scope_new(l->manager, &l->mdns_ipv4_scope, l, DNS_PROTOCOL_MDNS, AF_INET);
+                if (!l->mdns_scope) {
+                        r = dns_scope_new(l->manager, &l->mdns_scope, l, DNS_PROTOCOL_MDNS, AF_UNSPEC);
                         if (r < 0)
-                                log_warning_errno(r, "Failed to allocate mDNS IPv4 scope: %m");
+                                log_warning_errno(r, "Failed to allocate mDNS scope: %m");
                 }
         } else
-                l->mdns_ipv4_scope = dns_scope_free(l->mdns_ipv4_scope);
-
-        if (link_relevant(l, AF_INET6, true) &&
-            l->mdns_support != RESOLVE_SUPPORT_NO &&
-            l->manager->mdns_support != RESOLVE_SUPPORT_NO) {
-                if (!l->mdns_ipv6_scope) {
-                        r = dns_scope_new(l->manager, &l->mdns_ipv6_scope, l, DNS_PROTOCOL_MDNS, AF_INET6);
-                        if (r < 0)
-                                log_warning_errno(r, "Failed to allocate mDNS IPv6 scope: %m");
-                }
-        } else
-                l->mdns_ipv6_scope = dns_scope_free(l->mdns_ipv6_scope);
+                l->mdns_scope = dns_scope_free(l->mdns_scope);
 }
 
 void link_add_rrs(Link *l, bool force_remove) {
@@ -194,30 +181,18 @@ void link_add_rrs(Link *l, bool force_remove) {
             l->mdns_support == RESOLVE_SUPPORT_YES &&
             l->manager->mdns_support == RESOLVE_SUPPORT_YES) {
 
-                if (l->mdns_ipv4_scope) {
-                        r = dns_scope_add_dnssd_services(l->mdns_ipv4_scope);
+                if (l->mdns_scope) {
+                        r = dns_scope_add_dnssd_services(l->mdns_scope);
                         if (r < 0)
-                                log_warning_errno(r, "Failed to add IPv4 DNS-SD services: %m");
-                }
-
-                if (l->mdns_ipv6_scope) {
-                        r = dns_scope_add_dnssd_services(l->mdns_ipv6_scope);
-                        if (r < 0)
-                                log_warning_errno(r, "Failed to add IPv6 DNS-SD services: %m");
+                                log_warning_errno(r, "Failed to add DNS-SD services: %m");
                 }
 
         } else {
 
-                if (l->mdns_ipv4_scope) {
-                        r = dns_scope_remove_dnssd_services(l->mdns_ipv4_scope);
+                if (l->mdns_scope) {
+                        r = dns_scope_remove_dnssd_services(l->mdns_scope);
                         if (r < 0)
-                                log_warning_errno(r, "Failed to remove IPv4 DNS-SD services: %m");
-                }
-
-                if (l->mdns_ipv6_scope) {
-                        r = dns_scope_remove_dnssd_services(l->mdns_ipv6_scope);
-                        if (r < 0)
-                                log_warning_errno(r, "Failed to remove IPv6 DNS-SD services: %m");
+                                log_warning_errno(r, "Failed to remove DNS-SD services: %m");
                 }
         }
 }
@@ -844,19 +819,11 @@ LinkAddress *link_address_free(LinkAddress *a) {
                                 dns_zone_remove_rr(&a->link->llmnr_ipv6_scope->zone, a->llmnr_ptr_rr);
                 }
 
-                if (a->mdns_address_rr) {
-                        if (a->family == AF_INET && a->link->mdns_ipv4_scope)
-                                dns_zone_remove_rr(&a->link->mdns_ipv4_scope->zone, a->mdns_address_rr);
-                        else if (a->family == AF_INET6 && a->link->mdns_ipv6_scope)
-                                dns_zone_remove_rr(&a->link->mdns_ipv6_scope->zone, a->mdns_address_rr);
-                }
+                if (a->mdns_address_rr)
+                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_address_rr);
 
-                if (a->mdns_ptr_rr) {
-                        if (a->family == AF_INET && a->link->mdns_ipv4_scope)
-                                dns_zone_remove_rr(&a->link->mdns_ipv4_scope->zone, a->mdns_ptr_rr);
-                        else if (a->family == AF_INET6 && a->link->mdns_ipv6_scope)
-                                dns_zone_remove_rr(&a->link->mdns_ipv6_scope->zone, a->mdns_ptr_rr);
-                }
+                if (a->mdns_ptr_rr)
+                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_ptr_rr);
         }
 
         dns_resource_record_unref(a->llmnr_address_rr);
@@ -930,7 +897,7 @@ void link_address_add_rrs(LinkAddress *a, bool force_remove) {
 
                 if (!force_remove &&
                     link_address_relevant(a, true) &&
-                    a->link->mdns_ipv4_scope &&
+                    a->link->mdns_scope &&
                     a->link->mdns_support == RESOLVE_SUPPORT_YES &&
                     a->link->manager->mdns_support == RESOLVE_SUPPORT_YES) {
                         if (!a->link->manager->mdns_host_ipv4_key) {
@@ -960,23 +927,23 @@ void link_address_add_rrs(LinkAddress *a, bool force_remove) {
                                 a->mdns_ptr_rr->ttl = MDNS_DEFAULT_TTL;
                         }
 
-                        r = dns_zone_put(&a->link->mdns_ipv4_scope->zone, a->link->mdns_ipv4_scope, a->mdns_address_rr, true);
+                        r = dns_zone_put(&a->link->mdns_scope->zone, a->link->mdns_scope, a->mdns_address_rr, true);
                         if (r < 0)
                                 log_warning_errno(r, "Failed to add A record to MDNS zone: %m");
 
-                        r = dns_zone_put(&a->link->mdns_ipv4_scope->zone, a->link->mdns_ipv4_scope, a->mdns_ptr_rr, false);
+                        r = dns_zone_put(&a->link->mdns_scope->zone, a->link->mdns_scope, a->mdns_ptr_rr, false);
                         if (r < 0)
                                 log_warning_errno(r, "Failed to add IPv4 PTR record to MDNS zone: %m");
                 } else {
                         if (a->mdns_address_rr) {
-                                if (a->link->mdns_ipv4_scope)
-                                        dns_zone_remove_rr(&a->link->mdns_ipv4_scope->zone, a->mdns_address_rr);
+                                if (a->link->mdns_scope)
+                                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_address_rr);
                                 a->mdns_address_rr = dns_resource_record_unref(a->mdns_address_rr);
                         }
 
                         if (a->mdns_ptr_rr) {
-                                if (a->link->mdns_ipv4_scope)
-                                        dns_zone_remove_rr(&a->link->mdns_ipv4_scope->zone, a->mdns_ptr_rr);
+                                if (a->link->mdns_scope)
+                                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_ptr_rr);
                                 a->mdns_ptr_rr = dns_resource_record_unref(a->mdns_ptr_rr);
                         }
                 }
@@ -1040,7 +1007,7 @@ void link_address_add_rrs(LinkAddress *a, bool force_remove) {
 
                 if (!force_remove &&
                     link_address_relevant(a, true) &&
-                    a->link->mdns_ipv6_scope &&
+                    a->link->mdns_scope &&
                     a->link->mdns_support == RESOLVE_SUPPORT_YES &&
                     a->link->manager->mdns_support == RESOLVE_SUPPORT_YES) {
 
@@ -1071,23 +1038,23 @@ void link_address_add_rrs(LinkAddress *a, bool force_remove) {
                                 a->mdns_ptr_rr->ttl = MDNS_DEFAULT_TTL;
                         }
 
-                        r = dns_zone_put(&a->link->mdns_ipv6_scope->zone, a->link->mdns_ipv6_scope, a->mdns_address_rr, true);
+                        r = dns_zone_put(&a->link->mdns_scope->zone, a->link->mdns_scope, a->mdns_address_rr, true);
                         if (r < 0)
                                 log_warning_errno(r, "Failed to add AAAA record to MDNS zone: %m");
 
-                        r = dns_zone_put(&a->link->mdns_ipv6_scope->zone, a->link->mdns_ipv6_scope, a->mdns_ptr_rr, false);
+                        r = dns_zone_put(&a->link->mdns_scope->zone, a->link->mdns_scope, a->mdns_ptr_rr, false);
                         if (r < 0)
                                 log_warning_errno(r, "Failed to add IPv6 PTR record to MDNS zone: %m");
                 } else {
                         if (a->mdns_address_rr) {
-                                if (a->link->mdns_ipv6_scope)
-                                        dns_zone_remove_rr(&a->link->mdns_ipv6_scope->zone, a->mdns_address_rr);
+                                if (a->link->mdns_scope)
+                                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_address_rr);
                                 a->mdns_address_rr = dns_resource_record_unref(a->mdns_address_rr);
                         }
 
                         if (a->mdns_ptr_rr) {
-                                if (a->link->mdns_ipv6_scope)
-                                        dns_zone_remove_rr(&a->link->mdns_ipv6_scope->zone, a->mdns_ptr_rr);
+                                if (a->link->mdns_scope)
+                                        dns_zone_remove_rr(&a->link->mdns_scope->zone, a->mdns_ptr_rr);
                                 a->mdns_ptr_rr = dns_resource_record_unref(a->mdns_ptr_rr);
                         }
                 }

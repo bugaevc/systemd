@@ -32,26 +32,15 @@ int bus_dnssd_method_unregister(sd_bus_message *message, void *userdata, sd_bus_
                 return 1; /* Polkit will call us back */
 
         HASHMAP_FOREACH(l, m->links) {
-                if (l->mdns_ipv4_scope) {
-                        r = dns_scope_announce(l->mdns_ipv4_scope, true);
+                if (l->mdns_scope) {
+                        r = dns_scope_announce(l->mdns_scope, true);
                         if (r < 0)
-                                log_warning_errno(r, "Failed to send goodbye messages in IPv4 scope: %m");
+                                log_warning_errno(r, "Failed to send goodbye messages: %m");
 
-                        dns_zone_remove_rr(&l->mdns_ipv4_scope->zone, s->ptr_rr);
-                        dns_zone_remove_rr(&l->mdns_ipv4_scope->zone, s->srv_rr);
+                        dns_zone_remove_rr(&l->mdns_scope->zone, s->ptr_rr);
+                        dns_zone_remove_rr(&l->mdns_scope->zone, s->srv_rr);
                         LIST_FOREACH(items, txt_data, s->txt_data_items)
-                                dns_zone_remove_rr(&l->mdns_ipv4_scope->zone, txt_data->rr);
-                }
-
-                if (l->mdns_ipv6_scope) {
-                        r = dns_scope_announce(l->mdns_ipv6_scope, true);
-                        if (r < 0)
-                                log_warning_errno(r, "Failed to send goodbye messages in IPv6 scope: %m");
-
-                        dns_zone_remove_rr(&l->mdns_ipv6_scope->zone, s->ptr_rr);
-                        dns_zone_remove_rr(&l->mdns_ipv6_scope->zone, s->srv_rr);
-                        LIST_FOREACH(items, txt_data, s->txt_data_items)
-                                dns_zone_remove_rr(&l->mdns_ipv6_scope->zone, txt_data->rr);
+                                dns_zone_remove_rr(&l->mdns_scope->zone, txt_data->rr);
                 }
         }
 

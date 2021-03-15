@@ -1335,12 +1335,7 @@ DnsScope* manager_find_scope(Manager *m, DnsPacket *p) {
                 break;
 
         case DNS_PROTOCOL_MDNS:
-                if (p->family == AF_INET)
-                        return l->mdns_ipv4_scope;
-                else if (p->family == AF_INET6)
-                        return l->mdns_ipv6_scope;
-
-                break;
+                return l->mdns_scope;
 
         default:
                 break;

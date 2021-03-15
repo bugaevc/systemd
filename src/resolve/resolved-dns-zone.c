@@ -180,7 +180,7 @@ static int dns_zone_item_probe_start(DnsZoneItem *i)  {
                 if (!key)
                         return -ENOMEM;
 
-                r = dns_transaction_new(&t, i->scope, key, NULL, SD_RESOLVED_NO_CACHE|SD_RESOLVED_NO_ZONE);
+                r = dns_transaction_new(&t, i->scope, key, NULL, SD_RESOLVED_NO_CACHE|SD_RESOLVED_NO_ZONE|SD_RESOLVED_PROTOCOLS_ALL);
                 if (r < 0)
                         return r;
         }

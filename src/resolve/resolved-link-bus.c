@@ -203,11 +203,9 @@ static int property_get_scopes_mask(
         assert(reply);
         assert(l);
 
-        mask =  (l->unicast_scope ? SD_RESOLVED_DNS : 0) |
-                (l->llmnr_ipv4_scope ? SD_RESOLVED_LLMNR_IPV4 : 0) |
+        mask = (l->unicast_scope ? SD_RESOLVED_DNS : 0) | (l->llmnr_ipv4_scope ? SD_RESOLVED_LLMNR_IPV4 : 0) |
                 (l->llmnr_ipv6_scope ? SD_RESOLVED_LLMNR_IPV6 : 0) |
-                (l->mdns_ipv4_scope ? SD_RESOLVED_MDNS_IPV4 : 0) |
-                (l->mdns_ipv6_scope ? SD_RESOLVED_MDNS_IPV6 : 0);
+                (l->mdns_scope ? SD_RESOLVED_MDNS_IPV4 | SD_RESOLVED_MDNS_IPV6 : 0);
 
         return sd_bus_message_append(reply, "t", mask);
 }

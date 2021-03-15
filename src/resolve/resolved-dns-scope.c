@@ -27,6 +27,7 @@
 
 int dns_scope_new(Manager *m, DnsScope **ret, Link *l, DnsProtocol protocol, int family) {
         DnsScope *s;
+        int r;
 
         assert(m);
         assert(ret);
@@ -65,8 +66,12 @@ int dns_scope_new(Manager *m, DnsScope **ret, Link *l, DnsProtocol protocol, int
 
         LIST_PREPEND(scopes, m->dns_scopes, s);
 
-        dns_scope_llmnr_membership(s, true);
-        dns_scope_mdns_membership(s, true);
+        r = dns_scope_llmnr_membership(s, true);
+        if (r < 0)
+                log_error_errno(r, "Failed to set up LLMNR membership");
+        r = dns_scope_mdns_membership(s, true);
+        if (r < 0)
+                log_error_errno(r, "Failed to set up mDNS membership");
 
         log_debug("New scope on link %s, protocol %s, family %s", l ? l->ifname : "*", dns_protocol_to_string(protocol), family == AF_UNSPEC ? "*" : af_to_name(family));
 
@@ -548,7 +553,7 @@ static DnsScopeMatch match_subnet_reverse_lookups(
                 return _DNS_SCOPE_MATCH_INVALID;
 
         if (s->family != AF_UNSPEC && f != s->family)
-                return _DNS_SCOPE_MATCH_INVALID; /* Don't look for IPv4 addresses on LLMNR/mDNS over IPv6 and vice versa */
+                return _DNS_SCOPE_MATCH_INVALID; /* Don't look for IPv4 addresses on LLMNR over IPv6 and vice versa */
 
         LIST_FOREACH(addresses, a, s->link->addresses) {
 
@@ -704,8 +709,8 @@ DnsScopeMatch dns_scope_good_domain(
                 if (m >= 0)
                         return m;
 
-                if ((s->family == AF_INET && dns_name_endswith(domain, "in-addr.arpa") > 0) ||
-                    (s->family == AF_INET6 && dns_name_endswith(domain, "ip6.arpa") > 0))
+                if ((dns_name_endswith(domain, "in-addr.arpa") > 0) ||
+                    (dns_name_endswith(domain, "ip6.arpa") > 0))
                         return DNS_SCOPE_MAYBE;
 
                 if ((dns_name_endswith(domain, "local") > 0 && /* only resolve names ending in .local via mDNS */
@@ -789,7 +794,10 @@ bool dns_scope_good_key(DnsScope *s, const DnsResourceKey *key) {
         if (dns_type_is_dnssec(key->type))
                 return false;
 
-        /* On mDNS and LLMNR, send A and AAAA queries only on the respective scopes */
+        if (s->protocol == DNS_PROTOCOL_MDNS)
+                return true;
+
+        /* On LLMNR, send A and AAAA queries only on the respective scopes */
 
         key_family = dns_type_to_af(key->type);
         if (key_family < 0)
@@ -804,7 +812,7 @@ static int dns_scope_multicast_membership(DnsScope *s, bool b, struct in_addr in
         assert(s);
         assert(s->link);
 
-        if (s->family == AF_INET) {
+        if (IN_SET(s->family, AF_INET, AF_UNSPEC)) {
                 struct ip_mreqn mreqn = {
                         .imr_multiaddr = in,
                         .imr_ifindex = s->link->ifindex,
@@ -827,7 +835,7 @@ static int dns_scope_multicast_membership(DnsScope *s, bool b, struct in_addr in
                 if (setsockopt(fd, IPPROTO_IP, b ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, &mreqn, sizeof(mreqn)) < 0)
                         return -errno;
 
-        } else if (s->family == AF_INET6) {
+        } else if (IN_SET(s->family, AF_INET6, AF_UNSPEC)) {
                 struct ipv6_mreq mreq = {
                         .ipv6mr_multiaddr = in6,
                         .ipv6mr_interface = s->link->ifindex,
@@ -1464,9 +1472,16 @@ int dns_scope_announce(DnsScope *scope, bool goodbye) {
         if (r < 0)
                 return log_debug_errno(r, "Failed to build reply packet: %m");
 
-        r = dns_scope_emit_udp(scope, -1, AF_UNSPEC, p);
-        if (r < 0)
-                return log_debug_errno(r, "Failed to send reply packet: %m");
+        if (IN_SET(scope->family, AF_INET, AF_UNSPEC)) {
+                r = dns_scope_emit_udp(scope, -1, AF_INET, p);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to send mDNS IPv4 announcement packet: %m");
+        }
+        if (IN_SET(scope->family, AF_INET6, AF_UNSPEC)) {
+                r = dns_scope_emit_udp(scope, -1, AF_INET6, p);
+                if (r < 0)
+                        return log_debug_errno(r, "Failed to send mDNS IPv6 announcement packet: %m");
+        }
 
         /* In section 8.3 of RFC6762: "The Multicast DNS responder MUST send at least two unsolicited
          * responses, one second apart." */

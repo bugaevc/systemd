@@ -60,10 +60,9 @@ struct Link {
         Set *dnssec_negative_trust_anchors;
 
         DnsScope *unicast_scope;
+        DnsScope *mdns_scope;
         DnsScope *llmnr_ipv4_scope;
         DnsScope *llmnr_ipv6_scope;
-        DnsScope *mdns_ipv4_scope;
-        DnsScope *mdns_ipv6_scope;
 
         bool is_managed;
 

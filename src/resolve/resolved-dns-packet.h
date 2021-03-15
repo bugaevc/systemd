@@ -305,7 +305,7 @@ static inline uint64_t SD_RESOLVED_FLAGS_MAKE(
                 return f|(family == AF_INET6 ? SD_RESOLVED_LLMNR_IPV6 : SD_RESOLVED_LLMNR_IPV4);
 
         case DNS_PROTOCOL_MDNS:
-                return f|(family == AF_INET6 ? SD_RESOLVED_MDNS_IPV6 : SD_RESOLVED_MDNS_IPV4);
+                return f|SD_RESOLVED_MDNS;
 
         default:
                 return f;

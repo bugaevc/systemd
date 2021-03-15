@@ -1495,9 +1495,22 @@ static int dns_transaction_emit_udp(DnsTransaction *t) {
         } else
                 dns_transaction_close_connection(t, true);
 
-        r = dns_scope_emit_udp(t->scope, t->dns_udp_fd, t->server ? t->server->family : AF_UNSPEC, t->sent);
-        if (r < 0)
-                return r;
+        if (t->scope->protocol == DNS_PROTOCOL_MDNS) {
+                if (FLAGS_SET(t->query_flags, SD_RESOLVED_MDNS_IPV4)) {
+                        r = dns_scope_emit_udp(t->scope, t->dns_udp_fd, AF_INET, t->sent);
+                        if (r < 0)
+                                return r;
+                }
+                if (FLAGS_SET(t->query_flags, SD_RESOLVED_MDNS_IPV6)) {
+                        r = dns_scope_emit_udp(t->scope, t->dns_udp_fd, AF_INET6, t->sent);
+                        if (r < 0)
+                                return r;
+                }
+        } else {
+                r = dns_scope_emit_udp(t->scope, t->dns_udp_fd, t->server ? t->server->family : AF_UNSPEC, t->sent);
+                if (r < 0)
+                        return r;
+        }
 
         dns_transaction_reset_answer(t);
 
